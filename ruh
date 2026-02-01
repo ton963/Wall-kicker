@@ -1,0 +1,213 @@
+from pygame import *
+import random
+import os
+
+init()
+WIDTH, HEIGHT = 450, 700
+screen = display.set_mode((WIDTH, HEIGHT))
+display.set_caption("Wall Climber Pro")
+clock = time.Clock()
+
+GRAVITY = 0.25
+JUMP_Y = -8
+JUMP_X = 11
+CLIMB_SPEED = 2.5
+AIR_FRICTION = 0.95
+
+
+def load_image(name, color, size):
+    if os.path.exists(name):
+        return image.load(name).convert_alpha()
+    surf = Surface(size)
+    surf.fill(color)
+    return surf
+
+
+PLAYER_IMG = load_image("player.png", (30, 144, 255), (35, 45))
+BORTYK_IMG = load_image("bortyk.png", (80, 80, 90), (30, 140))
+
+
+class Player(sprite.Sprite):
+    def __init__(self):
+        super().__init__()
+        self.original_image = PLAYER_IMG
+        self.image = self.original_image
+        self.rect = self.image.get_rect(center=(WIDTH // 2, HEIGHT - 100))
+        self.vel_x = 0
+        self.vel_y = 0
+        self.on_wall = None
+        self.jumps_left = 2
+
+    def update(self, keys, on_ground):
+        if self.on_wall:
+            self.jumps_left = 2
+            self.vel_y = 0
+            if keys[K_w] or keys[K_UP]:
+                self.vel_y = -CLIMB_SPEED
+            elif keys[K_s] or keys[K_DOWN]:
+                self.vel_y = CLIMB_SPEED
+        elif on_ground:
+            self.jumps_left = 2
+            self.vel_y = 0
+        else:
+            self.vel_y += GRAVITY
+
+        if keys[K_a] or keys[K_LEFT]:
+            self.vel_x -= 0.5
+        if keys[K_d] or keys[K_RIGHT]:
+            self.vel_x += 0.5
+
+        self.vel_x *= AIR_FRICTION
+        self.rect.x += self.vel_x
+        self.rect.y += self.vel_y
+
+        if abs(self.vel_y) > 2:
+            scale_y = int(45 + abs(self.vel_y) * 1.5)
+            self.image = transform.scale(self.original_image, (35, min(scale_y, 65)))
+        else:
+            self.image = self.original_image
+
+        self.rect.left = max(self.rect.left, 0)
+        self.rect.right = min(self.rect.right, WIDTH)
+
+    def jump(self):
+        if self.on_wall == "LEFT":
+            self.vel_y = JUMP_Y
+            self.vel_x = JUMP_X
+        elif self.on_wall == "RIGHT":
+            self.vel_y = JUMP_Y
+            self.vel_x = -JUMP_X
+        elif self.jumps_left > 0:
+            self.vel_y = JUMP_Y
+            self.jumps_left -= 1
+
+
+class WallPlatform(sprite.Sprite):
+    def __init__(self, x, y, is_floor=False, moving=False):
+        super().__init__()
+        self.is_floor = is_floor
+        self.moving = moving
+        self.dir = random.choice([-1, 1])
+        self.speed = random.uniform(0.6, 1.2)
+        self.start_y = y
+        self.range = random.randint(40, 90)
+
+        if is_floor:
+            self.image = Surface((WIDTH, 40))
+            self.image.fill((50, 50, 60))
+        else:
+            self.image = transform.scale(BORTYK_IMG, (30, 140))
+
+        self.rect = self.image.get_rect(topleft=(x, y))
+
+    def update(self):
+        if self.moving and not self.is_floor:
+            self.rect.y += self.dir * self.speed
+            if abs(self.rect.y - self.start_y) > self.range:
+                self.dir *= -1
+
+
+def spawn_platform(platforms, y):
+    for _ in range(30):
+        side = random.choice(["LEFT", "RIGHT"])
+        offset = random.randint(0, 90)
+        x = offset if side == "LEFT" else WIDTH - 30 - offset
+        moving = random.random() < 0.35
+        rect = Rect(x, y, 30, 140)
+        if not any(rect.colliderect(p.rect) for p in platforms):
+            platforms.add(WallPlatform(x, y, False, moving))
+            return
+
+
+def game_loop():
+    player = Player()
+    platforms = sprite.Group()
+    score = 0
+
+    platforms.add(WallPlatform(0, HEIGHT - 40, True))
+
+    for i in range(1, 6):
+        spawn_platform(platforms, HEIGHT - i * 200)
+
+    while True:
+        screen.fill((20, 20, 30))
+        keys = key.get_pressed()
+
+        player.on_wall = None
+        on_ground = False
+
+        for p in platforms:
+            p.update()
+
+        hits = sprite.spritecollide(player, platforms, False)
+        for hit in hits:
+            if hit.is_floor:
+                if player.vel_y >= 0 and player.rect.bottom <= hit.rect.top + 10:
+                    player.rect.bottom = hit.rect.top
+                    player.vel_y = 0
+                    on_ground = True
+            else:
+                if player.vel_y < 0 and player.rect.top >= hit.rect.bottom - 10:
+                    player.rect.top = hit.rect.bottom
+                    player.vel_y = 0
+                elif player.vel_y >= 0 and player.rect.bottom <= hit.rect.top + 10:
+                    player.rect.bottom = hit.rect.top
+                    player.vel_y = 0
+                    on_ground = True
+
+                if player.rect.right >= hit.rect.left and player.rect.centerx < hit.rect.left:
+                    player.rect.right = hit.rect.left
+                    player.on_wall = "RIGHT"
+                elif player.rect.left <= hit.rect.right and player.rect.centerx > hit.rect.right:
+                    player.rect.left = hit.rect.right
+                    player.on_wall = "LEFT"
+
+        for ev in event.get():
+            if ev.type == QUIT:
+                return "QUIT"
+            if ev.type == KEYDOWN and ev.key in (K_SPACE, K_w, K_UP):
+                player.jump()
+
+        player.update(keys, on_ground)
+
+        if player.rect.y < HEIGHT // 2:
+            diff = HEIGHT // 2 - player.rect.y
+            player.rect.y = HEIGHT // 2
+            score += diff
+            for p in platforms:
+                p.rect.y += diff
+                if p.rect.y > HEIGHT:
+                    p.kill()
+                    spawn_platform(platforms, -150)
+
+        platforms.draw(screen)
+        screen.blit(player.image, player.rect)
+
+        score_font = font.SysFont("Arial", 30, bold=True)
+        screen.blit(score_font.render(f"Score: {score // 10}", True, (255, 255, 255)), (20, 20))
+
+        if player.rect.top > HEIGHT:
+            return "MENU"
+
+        display.flip()
+        clock.tick(60)
+
+
+state = "MENU"
+while state != "QUIT":
+    if state == "MENU":
+        screen.fill((10, 10, 15))
+        font_big = font.SysFont("Arial", 40, bold=True)
+        screen.blit(font_big.render("WALL KICKER", True, (0, 200, 255)), (110, HEIGHT // 3))
+        screen.blit(font_big.render("PRESS SPACE", True, (255, 255, 255)), (120, HEIGHT // 2))
+        display.flip()
+        for ev in event.get():
+            if ev.type == QUIT:
+                state = "QUIT"
+            if ev.type == KEYDOWN and ev.key == K_SPACE:
+                state = "PLAY"
+
+    if state == "PLAY":
+        state = game_loop()
+
+quit()
