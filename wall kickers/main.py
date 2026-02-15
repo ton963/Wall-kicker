@@ -4,9 +4,12 @@ import os
 import json
 
 init()
+mixer.pre_init(44100, -16, 1, 512)
+mixer.init()
+
 WIDTH, HEIGHT = 450, 700
 screen = display.set_mode((WIDTH, HEIGHT))
-display.set_caption("Wall Climber Pro: Ultimate Fix")
+display.set_caption("Wall Climber Pro")
 clock = time.Clock()
 
 ACCENT_COLOR = (0, 200, 255)
@@ -19,6 +22,11 @@ JUMP_X = 10
 AIR_FRICTION = 0.96
 GROUND_FRICTION = 0.8
 CLIMB_SPEED = 3
+
+jump_sfx = None
+if os.path.exists("jump.wav"):
+    jump_sfx = mixer.Sound("jump.wav")
+    jump_sfx.set_volume(0.23)
 
 
 def load_stats():
@@ -265,6 +273,10 @@ class Player(sprite.Sprite):
             jumped = True
             create_particles(self.rect.centerx, self.rect.bottom, WHITE)
 
+        if jumped:
+            if jump_sfx:
+                jump_sfx.play()
+
         self.on_wall = None
         self.attached_platform = None
         self.on_ground = False
@@ -340,17 +352,23 @@ def game_loop():
                 if p.rect.y > HEIGHT:
                     p.kill()
 
+                    min_y = HEIGHT
+                    for plat in platforms:
+                        if plat.rect.y < min_y:
+                            min_y = plat.rect.y
+
+                    new_spawn_y = min_y - random.randint(180, 220)
+
                     new_w = random.randint(30, 90)
                     new_side = random.choice([0, WIDTH - new_w])
                     is_moving = random.random() < 0.35
-                    new_wall = WallPlatform(new_side, -150, width=new_w, moving=is_moving)
+                    new_wall = WallPlatform(new_side, new_spawn_y, width=new_w, moving=is_moving)
                     platforms.add(new_wall)
 
                     if new_wall.spike_data:
                         spikes.add(Spike(new_wall, new_wall.spike_data["direction"], new_wall.spike_data["offset"]))
 
             for s in spikes:
-                # Spike update is handled by attached wall, but we need to check if wall died
                 if s.wall not in platforms:
                     s.kill()
 
@@ -382,6 +400,11 @@ def game_loop():
 
 
 def main_menu():
+    if os.path.exists("Hero-Immortal.ogg"):
+        mixer.music.load("Hero-Immortal.ogg")
+        mixer.music.set_volume(0.5)
+        mixer.music.play(-1)
+
     state = "MENU"
     last_score = 0
     stats = load_stats()
